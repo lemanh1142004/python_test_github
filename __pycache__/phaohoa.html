@@ -1,0 +1,722 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Trình diễn pháo hoa Tết (tối ưu + đẹp)</title>
+  <style>
+    .hud { display: none !important; }
+
+    html, body { margin:0; padding:0; height:100%; background:#000; overflow:hidden; font-family: system-ui, -apple-system, Segoe UI, Roboto; }
+    canvas { display:block; width:100vw; height:100vh; }
+    .hud{
+      position:fixed; left:12px; top:12px; color:#fff; opacity:.95;
+      background:rgba(0,0,0,.5); border:1px solid rgba(255,255,255,.15);
+      padding:10px 12px; border-radius:14px; backdrop-filter: blur(10px);
+      max-width:min(760px, calc(100vw - 24px));
+      user-select:none; z-index:100;
+    }
+    .row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+    .pill{ padding:4px 8px; border-radius:999px; background:rgba(255,255,255,.1); border:1px solid rgba(255,255,255,.2); font-size:12px; }
+    .btn{
+      cursor:pointer; padding:6px 10px; border-radius:12px; font-size:12px;
+      border:1px solid rgba(255,255,255,.25); background:rgba(255,255,255,.15); color:#fff;
+      transition: all 0.2s;
+    }
+    .btn:hover{ background:rgba(255,255,255,.25); }
+    .btn:active{ transform: translateY(1px); }
+    label{ font-size:12px; opacity:.9; }
+    input[type="range"]{ width:160px; }
+    .hint{ margin-top:8px; font-size:11px; opacity:.8; line-height:1.4; }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+
+  <div class="hud">
+    <button id="showToggleBtn" class="btn">⏸️ Tắt trình diễn</button>
+<span id="showToggleState" class="pill">Show: ON</span>
+
+    <div class="row">
+      <b>🎆 Pháo hoa Tết (tối ưu + đẹp)</b>
+      <span class="pill">Click: bắn</span>
+      <span class="pill">Space: tự động</span>
+      <span class="pill">R: reset</span>
+    </div>
+
+    <div class="row" style="margin-top:8px">
+      <button id="audioBtn" class="btn">🔊 Bật âm thanh</button>
+      <span id="audioState" class="pill">Audio: OFF</span>
+      <label>Âm lượng</label>
+      <input id="vol" type="range" min="0" max="100" value="65">
+      <span id="volVal" class="pill">65</span>
+    </div>
+
+    <div class="row" style="margin-top:8px">
+      <label>Gió</label>
+      <input id="wind" type="range" min="-50" max="50" value="10">
+      <span id="windVal" class="pill">10</span>
+      <label style="margin-left:6px">Tốc độ show</label>
+      <input id="tempo" type="range" min="60" max="180" value="110">
+      <span id="tempoVal" class="pill">110 BPM</span>
+      <span id="showState" class="pill">Show: ON</span>
+    </div>
+
+    <div class="hint">
+      ✅ Fix lag: nền tĩnh render 1 lần, giới hạn hạt + không “đẻ reflections” mỗi frame.<br/>
+      ✨ Pháo hoa đẹp hơn: ring/chrys/willow/palm/star + flash + afterglow + crackle.
+    </div>
+  </div>
+<script>
+(() => {
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d', { alpha:false });
+
+  // UI
+  const audioBtn = document.getElementById('audioBtn');
+  const audioState = document.getElementById('audioState');
+  const showState  = document.getElementById('showState');
+  const volEl = document.getElementById('vol');
+  const volVal = document.getElementById('volVal');
+  const windEl = document.getElementById('wind');
+  const windVal = document.getElementById('windVal');
+  const tempoEl = document.getElementById('tempo');
+  const tempoVal = document.getElementById('tempoVal');
+
+  volEl.addEventListener('input', ()=> volVal.textContent = volEl.value);
+  windEl.addEventListener('input', ()=> windVal.textContent = windEl.value);
+  tempoEl.addEventListener('input', ()=> tempoVal.textContent = tempoEl.value + " BPM");
+
+  // Helpers
+  const rand=(a,b)=>a+Math.random()*(b-a);
+  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+  const hsla=(h,s,l,a=1)=>`hsla(${h},${s}%,${l}%,${a})`;
+  const TAU=Math.PI*2;
+
+  let W=0,H=0,dpr=1;
+  const horizonY = ()=>Math.floor(H*0.78);
+
+  // Precomputed decor (nhẹ)
+  const stars=[];
+  const blossoms=[];
+
+  function resize(){
+    dpr = Math.max(1, Math.min(2, devicePixelRatio || 1));
+    W = innerWidth|0; H = innerHeight|0;
+    canvas.width = (W*dpr)|0;
+    canvas.height = (H*dpr)|0;
+    canvas.style.width = W+"px";
+    canvas.style.height = H+"px";
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+
+    // init stars + blossoms
+    stars.length=0; blossoms.length=0;
+    const starN = Math.min(160, Math.floor(W*H/17000));
+    for(let i=0;i<starN;i++){
+      stars.push({ x:Math.random()*W, y:Math.random()*H*0.55, r:rand(0.8,1.6), p:rand(0,6.28) });
+    }
+    const n = Math.min(170, Math.floor(W*H/14000));
+    for(let i=0;i<n;i++){
+      blossoms.push({
+        x:Math.random()*W, y:Math.random()*H*0.7,
+        r:rand(0.9,1.8), a:rand(0.10,0.20),
+        vx:rand(-0.08,0.08), vy:rand(0.04,0.11),
+        rot:rand(0,TAU), vr:rand(-0.02,0.02),
+        hue:rand(40,58)
+      });
+    }
+  }
+  addEventListener('resize', resize, {passive:true});
+  resize();
+
+  // ---- Background (render every frame nhưng nhẹ, không dùng gradient nặng liên tục) ----
+  function roundRect(x,y,w,h,r){
+    const rr = Math.min(r, w/2, h/2);
+    ctx.beginPath();
+    ctx.moveTo(x+rr, y);
+    ctx.arcTo(x+w, y, x+w, y+h, rr);
+    ctx.arcTo(x+w, y+h, x, y+h, rr);
+    ctx.arcTo(x, y+h, x, y, rr);
+    ctx.arcTo(x, y, x+w, y, rr);
+    ctx.closePath();
+  }
+
+  function drawBackground(now){
+    // sky gradient
+    const g = ctx.createLinearGradient(0,0,0,H);
+    g.addColorStop(0, '#08051a');
+    g.addColorStop(0.25, '#0c0828');
+    g.addColorStop(0.65, '#060415');
+    g.addColorStop(1, '#02020a');
+    ctx.fillStyle = g;
+    ctx.fillRect(0,0,W,H);
+
+    // stars (cheap twinkle)
+    ctx.fillStyle = '#fff';
+    for(const s of stars){
+      const tw = 0.25 + 0.75*(0.5 + 0.5*Math.sin(now*0.0015 + s.p));
+      ctx.globalAlpha = tw * 0.75;
+      ctx.fillRect(s.x, s.y, s.r, s.r);
+    }
+    ctx.globalAlpha = 1;
+
+    // lantern string
+    const topY = Math.max(48, Math.floor(H*0.09));
+    ctx.globalAlpha = 0.85;
+    ctx.strokeStyle = 'rgba(255,255,255,0.20)';
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.moveTo(0, topY);
+    for (let x=0; x<=W; x+=50){
+      const y = topY + Math.sin((x/W)*Math.PI*2.5)*12;
+      ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    // lanterns (simple, no huge gradients)
+    for (let x=25; x<W; x+=110){
+      const y = topY + Math.sin((x/W)*Math.PI*2.5)*12;
+      const r = 17;
+      const pulse = 0.78 + 0.22*Math.sin(now*0.003 + x*0.01);
+
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = 0.22*pulse;
+      ctx.fillStyle = 'rgba(255,80,40,1)';
+      ctx.beginPath(); ctx.arc(x, y+28, 34, 0, TAU); ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = 'source-over';
+
+      ctx.fillStyle = 'rgba(160,20,20,0.95)';
+      ctx.beginPath();
+      ctx.ellipse(x, y+28, r, r*1.2, 0, 0, TAU);
+      ctx.fill();
+
+      ctx.strokeStyle = 'rgba(255,210,90,0.92)';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(x, y+45);
+      ctx.lineTo(x, y+62);
+      ctx.stroke();
+    }
+
+    // banner
+    const bx = W*0.5, by = Math.max(90, H*0.16);
+    const bw = Math.min(450, W*0.72), bh = 58;
+    ctx.fillStyle = 'rgba(160,15,15,0.88)';
+    roundRect(bx-bw/2, by-bh/2, bw, bh, 15);
+    ctx.fill();
+
+    ctx.strokeStyle = 'rgba(255,230,130,0.65)';
+    ctx.lineWidth = 3;
+    roundRect(bx-bw/2+7, by-bh/2+7, bw-14, bh-14, 13);
+    ctx.stroke();
+
+    ctx.fillStyle = 'rgba(255,230,120,0.95)';
+    ctx.font = `700 ${Math.max(18, Math.floor(bh*0.44))}px system-ui`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('CHÚC MỪNG NĂM MỚI', bx, by);
+
+    // ground
+    const hy = horizonY();
+    ctx.fillStyle = '#050512';
+    ctx.fillRect(0, hy, W, H-hy);
+
+    // skyline (very cheap blocks)
+    ctx.fillStyle = '#0b0d18';
+    const step = 22;
+    for (let x=0; x<W; x+=step){
+      const isTall = (x%(step*8)===0);
+      const h = rand(35, 150) * (isTall ? 1.2 : 1.0);
+      ctx.fillRect(x, hy-h, step-2, h);
+    }
+
+    // blossoms
+    const windTiny = (+windEl.value)/900;
+    for(const b of blossoms){
+      b.x += (b.vx + windTiny) * 0.9;
+      b.y += b.vy * 0.9;
+      b.rot += b.vr * 0.9;
+
+      if (b.y > hy-6) { b.y = rand(0, H*0.25); b.x = Math.random()*W; }
+      if (b.x < -20) b.x = W+20;
+      if (b.x > W+20) b.x = -20;
+
+      ctx.save();
+      ctx.translate(b.x, b.y);
+      ctx.rotate(b.rot);
+      ctx.globalAlpha = b.a;
+      ctx.fillStyle = hsla(b.hue, 92, 62, 1);
+      for(let i=0;i<5;i++){
+        ctx.rotate(TAU/5);
+        ctx.beginPath();
+        ctx.ellipse(b.r*2.2, 0, b.r*1.05, b.r*0.75, 0.15, 0, TAU);
+        ctx.fill();
+      }
+      ctx.globalAlpha = b.a*0.9;
+      ctx.fillStyle = 'rgba(255,230,130,0.9)';
+      ctx.beginPath(); ctx.arc(0,0,b.r*0.7,0,TAU); ctx.fill();
+      ctx.restore();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // ---------- Audio (giữ tiếng "đoàng/đùng") ----------
+  let audio=null;
+  function makeAudio(){
+    const AC = window.AudioContext || window.webkitAudioContext;
+    const ac = new AC();
+
+    const master = ac.createGain();
+    master.gain.value = (+volEl.value)/100;
+    master.connect(ac.destination);
+
+    const comp = ac.createDynamicsCompressor();
+    comp.threshold.value = -20;
+    comp.knee.value = 24;
+    comp.ratio.value = 8;
+    comp.attack.value = 0.001;
+    comp.release.value = 0.16;
+    comp.connect(master);
+
+    const delay = ac.createDelay(0.45);
+    delay.delayTime.value = 0.15;
+    const fb = ac.createGain(); fb.gain.value = 0.30;
+    const lp = ac.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=2200;
+    delay.connect(lp); lp.connect(fb); fb.connect(delay);
+    const wet = ac.createGain(); wet.gain.value = 0.28;
+    delay.connect(wet); wet.connect(comp);
+    const dry = ac.createGain(); dry.gain.value = 1.0;
+    dry.connect(comp);
+
+    const noiseLen = ac.sampleRate * 1.2;
+    const noiseBuf = ac.createBuffer(1, noiseLen, ac.sampleRate);
+    const data = noiseBuf.getChannelData(0);
+    for (let i=0;i<noiseLen;i++) data[i] = (Math.random()*2-1);
+
+    volEl.addEventListener('input', ()=>{
+      master.gain.setTargetAtTime((+volEl.value)/100, ac.currentTime, 0.03);
+    });
+
+    function playLaunch(pan=0){
+      const t=ac.currentTime;
+      const src=ac.createBufferSource(); src.buffer=noiseBuf;
+      const bp=ac.createBiquadFilter(); bp.type='bandpass'; bp.frequency.setValueAtTime(950,t); bp.Q.value=0.9;
+      const g=ac.createGain();
+      g.gain.setValueAtTime(0.0001,t);
+      g.gain.exponentialRampToValueAtTime(0.32,t+0.025);
+      g.gain.exponentialRampToValueAtTime(0.0001,t+0.28);
+      const p=ac.createStereoPanner(); p.pan.value=clamp(pan,-1,1);
+      src.connect(bp); bp.connect(g); g.connect(p);
+      p.connect(dry); p.connect(delay);
+      src.start(t); src.stop(t+0.30);
+    }
+
+    function playBang(size=1, pan=0){
+      const t=ac.currentTime;
+      const p=ac.createStereoPanner(); p.pan.value=clamp(pan,-1,1);
+
+      const click=ac.createOscillator();
+      click.type='square';
+      click.frequency.setValueAtTime(260,t);
+      const cg=ac.createGain();
+      cg.gain.setValueAtTime(0.0001,t);
+      cg.gain.exponentialRampToValueAtTime(0.45*size,t+0.001);
+      cg.gain.exponentialRampToValueAtTime(0.0001,t+0.022);
+      click.connect(cg); cg.connect(p);
+      click.start(t); click.stop(t+0.024);
+
+      const n1=ac.createBufferSource(); n1.buffer=noiseBuf;
+      const hp=ac.createBiquadFilter(); hp.type='highpass'; hp.frequency.setValueAtTime(1600,t);
+      const bp=ac.createBiquadFilter(); bp.type='bandpass'; bp.frequency.setValueAtTime(3600,t); bp.Q.value=1.0;
+      const ng=ac.createGain();
+      ng.gain.setValueAtTime(0.0001,t);
+      ng.gain.exponentialRampToValueAtTime(0.62*size,t+0.005);
+      ng.gain.exponentialRampToValueAtTime(0.0001,t+0.14);
+      n1.connect(hp); hp.connect(bp); bp.connect(ng); ng.connect(p);
+      n1.start(t); n1.stop(t+0.15);
+
+      const sub=ac.createOscillator();
+      sub.type='sine';
+      sub.frequency.setValueAtTime(82,t);
+      sub.frequency.exponentialRampToValueAtTime(38,t+0.28);
+      const sg=ac.createGain();
+      sg.gain.setValueAtTime(0.0001,t);
+      sg.gain.exponentialRampToValueAtTime(0.78*size,t+0.010);
+      sg.gain.exponentialRampToValueAtTime(0.0001,t+0.42);
+      sub.connect(sg); sg.connect(p);
+      sub.start(t); sub.stop(t+0.44);
+
+      p.connect(dry); p.connect(delay);
+    }
+
+    function playCrackle(pan=0){
+      const t0=ac.currentTime;
+      const p=ac.createStereoPanner(); p.pan.value=clamp(pan,-1,1);
+      p.connect(dry); p.connect(delay);
+      const pops=10+(Math.random()*12|0);
+      for(let i=0;i<pops;i++){
+        const t=t0+Math.random()*0.22;
+        const n=ac.createBufferSource(); n.buffer=noiseBuf;
+        const bp=ac.createBiquadFilter(); bp.type='bandpass'; bp.frequency.setValueAtTime(rand(2000,7200),t); bp.Q.value=rand(1.0,2.6);
+        const g=ac.createGain();
+        g.gain.setValueAtTime(0.0001,t);
+        g.gain.exponentialRampToValueAtTime(rand(0.04,0.12),t+0.002);
+        g.gain.exponentialRampToValueAtTime(0.0001,t+0.03);
+        n.connect(bp); bp.connect(g); g.connect(p);
+        n.start(t); n.stop(t+0.035);
+      }
+    }
+
+    return { ac, playLaunch, playBang, playCrackle };
+  }
+
+  function ensureAudio(){
+    if(!audio) audio = makeAudio();
+    if(audio.ac.state !== 'running') audio.ac.resume();
+    audioState.textContent = 'Audio: ON';
+  }
+  // Auto-enable audio at first user gesture (browser policy friendly)
+// ✅ Auto bật âm thanh ngay tương tác đầu tiên (không cần bấm nút)
+const autoEnableAudio = () => {
+  ensureAudio();                 // bật AudioContext
+  // nếu có nút audio thì cập nhật UI
+  const st = document.getElementById('audioState');
+  if (st) st.textContent = 'Audio: ON';
+};
+
+window.addEventListener('pointerdown', autoEnableAudio, { once: true });
+window.addEventListener('touchstart', autoEnableAudio, { once: true, passive: true });
+window.addEventListener('keydown', autoEnableAudio, { once: true });
+
+
+window.addEventListener('pointerdown', autoEnableAudio, { once: true });
+window.addEventListener('touchstart', autoEnableAudio, { once: true, passive: true });
+window.addEventListener('keydown', autoEnableAudio, { once: true });
+
+  audioBtn.addEventListener('click', ensureAudio);
+
+  // ---------- Fireworks (đẹp + có giới hạn để không lag) ----------
+  const rockets=[], sparks=[], trails=[], flashes=[];
+  const TYPES = { PEONY:0, CHRYS:1, RING:2, WILLOW:3, CRACKLE:4, PALM:5, STAR:6 };
+  const CAPS = { rockets:40, sparks:2200, trails:900, flashes:60 };
+
+let showMode = true;
+
+const showToggleBtn = document.getElementById('showToggleBtn');
+const showToggleState = document.getElementById('showToggleState');
+  
+  showState.textContent = 'Show: OFF';
+
+  function resetAll(){
+    rockets.length=0; sparks.length=0; trails.length=0; flashes.length=0;
+  }
+  showToggleBtn.addEventListener('click', () => {
+  showMode = !showMode;
+
+  if (showMode) {
+    showToggleBtn.textContent = '⏸️ Tắt trình diễn';
+    showToggleState.textContent = 'Show: ON';
+  } else {
+    showToggleBtn.textContent = '▶️ Bật trình diễn';
+    showToggleState.textContent = 'Show: OFF';
+  }
+});
+
+  function addTrail(x,y,hue,a=0.75,r=2.2,life=0.16){
+    if(trails.length>=CAPS.trails) return;
+    trails.push({x,y,hue,a,r,life,maxLife:life});
+  }
+  function addFlash(x,y,hue,power){
+    if(flashes.length>=CAPS.flashes) return;
+    flashes.push({x,y,hue,a:1,r:26*power,life:0.22,maxLife:0.22});
+  }
+
+  function spawnRocket(fromX, toX, toY, type, power=1){
+    if(rockets.length>=CAPS.rockets) return;
+    const hy=horizonY();
+    const sx=clamp(fromX,20,W-20), sy=hy;
+    const tx=clamp(toX,20,W-20),   ty=clamp(toY,60,hy-90);
+
+    const dx=tx-sx, dy=ty-sy;
+    const dist=Math.max(1, Math.hypot(dx,dy));
+    const speed=rand(420,560)*(0.9+0.15*power);
+    const time=dist/speed;
+
+    const hue=rand(0,360);
+    rockets.push({x:sx,y:sy,vx:dx/time,vy:dy/time,life:0,maxLife:time,hue,type,power,trailAcc:0});
+    if(audio) audio.playLaunch((sx/W)*2-1);
+  }
+
+  function explode(r){
+    addFlash(r.x,r.y,r.hue,r.power);
+    if(audio){
+      const pan=(r.x/W)*2-1;
+      const size=clamp(0.95*r.power + (r.type===TYPES.CHRYS?0.15:0), 0.9, 1.6);
+      audio.playBang(size, pan);
+      if(r.type===TYPES.CRACKLE || Math.random()<0.25) audio.playCrackle(pan);
+    }
+
+    let count=90;
+    if(r.type===TYPES.WILLOW) count=140;
+    if(r.type===TYPES.CHRYS)  count=130;
+    if(r.type===TYPES.RING)   count=110;
+    if(r.type===TYPES.CRACKLE)count=120;
+    if(r.type===TYPES.PALM)   count=95;
+    if(r.type===TYPES.STAR)   count=70;
+
+    if(sparks.length+count>CAPS.sparks) count=Math.max(0, CAPS.sparks-sparks.length);
+    if(count<=0) return;
+
+    const baseHue=r.hue;
+    const baseSpeed=(
+      r.type===TYPES.WILLOW? rand(120,220) :
+      r.type===TYPES.RING  ? rand(220,320) :
+      r.type===TYPES.CHRYS ? rand(200,320) :
+      r.type===TYPES.PALM  ? rand(240,360) :
+      r.type===TYPES.STAR  ? rand(200,340) :
+      rand(200,340)
+    )*(0.9+0.25*r.power);
+
+    for(let i=0;i<count;i++){
+      const a=(i/count)*TAU + rand(-0.03,0.03);
+      let sp=baseSpeed*(0.55+Math.random()*0.65);
+
+      if(r.type===TYPES.RING) sp=baseSpeed*(0.92+Math.random()*0.10);
+      if(r.type===TYPES.PALM){
+        const arm=(i%10)===0;
+        sp=baseSpeed*(arm?rand(0.95,1.15):rand(0.35,0.55));
+      }
+      if(r.type===TYPES.STAR){
+        const spike=(i%10)===0;
+        sp=baseSpeed*(spike?rand(1.05,1.25):rand(0.55,0.85));
+      }
+
+      let vx=Math.cos(a)*sp;
+      let vy=Math.sin(a)*sp;
+
+      if(r.type===TYPES.WILLOW){
+        vy = vy*0.55 + rand(40,120);
+      }
+
+      const life=(
+        r.type===TYPES.WILLOW? rand(1.6,2.4) :
+        r.type===TYPES.CHRYS ? rand(1.2,1.9) :
+        r.type===TYPES.CRACKLE?rand(0.9,1.5) :
+        rand(1.0,1.7)
+      );
+
+      const size=(
+        r.type===TYPES.WILLOW? rand(1.1,2.0) :
+        r.type===TYPES.STAR  ? rand(1.4,2.4) :
+        rand(1.1,2.2)
+      )*(0.85+0.2*r.power);
+
+      sparks.push({
+        x:r.x,y:r.y,vx,vy,
+        hue:(r.type===TYPES.CHRYS?(baseHue+rand(-22,22)):(baseHue+rand(-35,35)))%360,
+        life,maxLife:life,size,
+        tw: Math.random() < (r.type===TYPES.WILLOW?0.55:0.35),
+        crackle:(r.type===TYPES.CRACKLE && Math.random()<0.18),
+        type:r.type
+      });
+    }
+  }
+
+  // input
+  canvas.addEventListener('pointerdown',(e)=>{
+    ensureAudio();
+    const rect=canvas.getBoundingClientRect();
+    const px=e.clientX-rect.left;
+    const py=e.clientY-rect.top;
+    const hy=horizonY();
+
+    const tx=px+rand(-90,90);
+    const ty=clamp(py+rand(-70,70), 60, hy-90);
+    const type=[TYPES.PEONY,TYPES.CHRYS,TYPES.RING,TYPES.WILLOW,TYPES.CRACKLE,TYPES.PALM,TYPES.STAR][Math.random()*7|0];
+    spawnRocket(px+rand(-160,160), tx, ty, type, 1.1);
+  }, {passive:true});
+
+  addEventListener('keydown',(e)=>{
+    if(e.code==='Space'){
+      e.preventDefault();
+      showMode=!showMode;
+      showState.textContent = showMode ? 'Show: ON' : 'Show: OFF';
+    }
+    if(e.code==='KeyR') resetAll();
+  });
+
+  // ---- Main loop with error overlay ----
+  let last=performance.now();
+  let lastShow=0;
+
+  function loop(now){
+    try{
+      const dt = Math.min(0.033, (now-last)/1000); // seconds
+      last=now;
+
+      drawBackground(now);
+
+      // show mode spawn
+      if(showMode){
+        const bpm=+tempoEl.value;
+        const interval=60/bpm;
+        if(now/1000 - lastShow > interval){
+          lastShow=now/1000;
+          const hy=horizonY();
+
+          const lane=Math.random();
+          const from = lane<0.33? rand(W*0.12,W*0.30) : lane<0.66? rand(W*0.42,W*0.58) : rand(W*0.70,W*0.88);
+          const tx = from + rand(-W*0.18, W*0.18);
+          const ty = rand(70, hy-170);
+          const type=[TYPES.PEONY,TYPES.CHRYS,TYPES.RING,TYPES.WILLOW,TYPES.CRACKLE,TYPES.PALM,TYPES.STAR][Math.random()*7|0];
+          const power = (lane>0.62 && Math.random()<0.35) ? 1.35 : 1.05;
+          spawnRocket(from, tx, ty, type, power);
+
+          if(Math.random()<0.22){
+            spawnRocket(rand(W*0.40,W*0.60), rand(W*0.28,W*0.72), rand(60, hy-200), TYPES.CHRYS, 1.35);
+          }
+        }
+      }
+
+      // update rockets
+      const wind = (+windEl.value) * 10;
+      for(let i=rockets.length-1;i>=0;i--){
+        const r=rockets[i];
+        r.life += dt;
+        r.vx += (wind*0.002)*dt*60;
+        r.vy += (220*0.004)*dt*60;
+
+        r.x += r.vx*dt;
+        r.y += r.vy*dt;
+
+        r.trailAcc += dt;
+        if(r.trailAcc>0.012){
+          r.trailAcc=0;
+          addTrail(r.x,r.y,r.hue,0.85,rand(1.8,2.8),0.16);
+        }
+
+        if(r.life>=r.maxLife || r.y<60){
+          explode(r);
+          rockets.splice(i,1);
+        }
+      }
+
+      // update sparks
+      const windForce=(+windEl.value)*14;
+      for(let i=sparks.length-1;i>=0;i--){
+        const s=sparks[i];
+        s.life -= dt;
+        if(s.life<=0){ sparks.splice(i,1); continue; }
+
+        s.vx += (windForce*0.002)*dt*60;
+        s.vy += ((s.type===TYPES.WILLOW?160:240)*0.004)*dt*60;
+
+        s.vx *= Math.pow(0.985, dt*60);
+        s.vy *= Math.pow(0.985, dt*60);
+
+        s.x += s.vx*dt;
+        s.y += s.vy*dt;
+
+        if(s.crackle && Math.random()<0.045){
+          s.crackle=false;
+          const mini=10+(Math.random()*12|0);
+          for(let k=0;k<mini;k++){
+            if(sparks.length>=CAPS.sparks) break;
+            const a=Math.random()*TAU;
+            const sp=rand(90,180);
+            sparks.push({
+              x:s.x,y:s.y,
+              vx:Math.cos(a)*sp, vy:Math.sin(a)*sp,
+              hue:(s.hue+rand(-10,10))%360,
+              life:rand(0.25,0.45), maxLife:0.45,
+              size:rand(0.9,1.6),
+              tw:true, crackle:false, type:TYPES.CRACKLE
+            });
+          }
+          if(audio) audio.playCrackle((s.x/W)*2-1);
+        }
+
+        if(Math.random()<0.35 && s.life > s.maxLife*0.35){
+          addTrail(s.x,s.y,s.hue,0.55,rand(1.2,2.0),0.10);
+        }
+      }
+
+      // update trails
+      for(let i=trails.length-1;i>=0;i--){
+        const tr=trails[i];
+        tr.life -= dt;
+        if(tr.life<=0){ trails.splice(i,1); continue; }
+        tr.a = (tr.life/tr.maxLife);
+      }
+
+      // update flashes
+      for(let i=flashes.length-1;i>=0;i--){
+        const f=flashes[i];
+        f.life -= dt;
+        if(f.life<=0){ flashes.splice(i,1); continue; }
+        f.a = f.life/f.maxLife;
+      }
+
+      // draw additive effects
+      ctx.globalCompositeOperation='lighter';
+
+      // trails
+      for(const tr of trails){
+        ctx.globalAlpha = tr.a*0.55;
+        ctx.fillStyle = hsla(tr.hue,92,62,1);
+        ctx.beginPath(); ctx.arc(tr.x,tr.y,tr.r*1.7,0,TAU); ctx.fill();
+      }
+
+      // rockets
+      for(const r of rockets){
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = hsla(r.hue,95,72,1);
+        ctx.beginPath(); ctx.arc(r.x,r.y,3.2,0,TAU); ctx.fill();
+        ctx.globalAlpha = 0.18;
+        ctx.beginPath(); ctx.arc(r.x,r.y,14,0,TAU); ctx.fill();
+      }
+
+      // sparks
+      for(const s of sparks){
+        const fade = clamp(s.life/s.maxLife,0,1);
+        let a=fade;
+        if(s.tw) a *= (0.55 + 0.45*Math.sin((s.x + now*0.02)*0.03));
+        const hue = (s.hue + (1-fade)*18) % 360;
+        ctx.globalAlpha = a;
+        ctx.fillStyle = hsla(hue,92,68,1);
+        ctx.beginPath(); ctx.arc(s.x,s.y,s.size,0,TAU); ctx.fill();
+      }
+
+      // flash
+      for(const f of flashes){
+        ctx.globalAlpha = f.a*0.65;
+        ctx.fillStyle = hsla(f.hue,95,70,1);
+        ctx.beginPath(); ctx.arc(f.x,f.y,f.r,0,TAU); ctx.fill();
+      }
+
+      ctx.globalAlpha=1;
+      ctx.globalCompositeOperation='source-over';
+
+      requestAnimationFrame(loop);
+    } catch (err){
+      // Show error on canvas (so you see immediately)
+      ctx.setTransform(dpr,0,0,dpr,0,0);
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0,0,W,H);
+      ctx.fillStyle = '#fff';
+      ctx.font = '16px system-ui';
+      ctx.fillText('❌ JS Error – mở F12 Console để xem chi tiết:', 20, 40);
+      ctx.fillStyle = '#ffb4b4';
+      ctx.fillText(String(err), 20, 70);
+      console.error(err);
+    }
+  }
+
+  requestAnimationFrame(loop);
+})();
+</script>
+
+</body>
+</html>
