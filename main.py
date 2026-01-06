@@ -17,7 +17,7 @@ def main():
             ql.themsinhvien()
         elif n == '2':
             ql.hienthidanhsach()
-        elif n == '3':
+        elif n == '2':
             ql.timkiemsv()
         elif n == '4':
             ql.xoasv()
