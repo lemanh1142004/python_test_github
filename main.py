@@ -13,7 +13,7 @@ def main():
         n = input("Nhập hành động tương ứng")
         if n == '0':
             return
-        elif n == '1':
+        elif n == '2':
             ql.themsinhvien()
         elif n == '2':
             ql.hienthidanhsach()
