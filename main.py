@@ -13,11 +13,11 @@ def main():
         n = input("Nhập hành động tương ứng")
         if n == '0':
             return
-        elif n == '2':
+        elif n == '1':
             ql.themsinhvien()
         elif n == '2':
             ql.hienthidanhsach()
-        elif n == '2':
+        elif n == '3':
             ql.timkiemsv()
         elif n == '4':
             ql.xoasv()
